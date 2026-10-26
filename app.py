@@ -1,6 +1,7 @@
 
 import os
 import json
+import html
 import joblib
 import pandas as pd
 import streamlit as st
@@ -11,67 +12,44 @@ st.set_page_config(
     page_title="GeneticCare AI",
     page_icon="🧬",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# ---------- Custom Styling ----------
+# ---------- Styling ----------
 st.markdown("""
 <style>
-    .stApp {
-        background: #f5f8fc;
-    }
-    .block-container {
-        padding-top: 1.8rem;
-        padding-bottom: 2rem;
-        max-width: 1250px;
-    }
-    .hero {
-        background: linear-gradient(120deg, #123b63, #168b89);
-        padding: 30px;
-        border-radius: 20px;
-        color: white;
-        margin-bottom: 22px;
-    }
-    .hero h1 {
-        color: white;
-        font-size: 2.2rem;
-        margin-bottom: 8px;
-    }
-    .hero p {
-        color: #e5f5ff;
-        font-size: 1.05rem;
-    }
-    .info-card {
-        background: white;
-        padding: 20px;
-        border-radius: 15px;
-        border: 1px solid #e2eaf2;
-        margin-bottom: 12px;
-    }
-    .result-card {
-        background: #e8f7f2;
-        padding: 24px;
-        border-radius: 16px;
-        border: 1px solid #b9e8d7;
-        margin: 12px 0;
-    }
-    div.stButton > button,
-    div.stFormSubmitButton > button {
-        border-radius: 10px;
-        min-height: 45px;
-        font-weight: 600;
-    }
-    [data-testid="stMetric"] {
-        background: white;
-        padding: 16px;
-        border: 1px solid #e2eaf2;
-        border-radius: 14px;
-    }
+.stApp { background: #f4f8fc; }
+.block-container { max-width: 1100px; padding-top: 2rem; }
+.hero {
+    background: linear-gradient(120deg, #123b63, #138a83);
+    color: white; padding: 28px; border-radius: 20px;
+    margin-bottom: 22px;
+}
+.hero h1 { color: white; margin-bottom: 8px; }
+.hero p { color: #e4f5ff; }
+.section-card {
+    background: white; padding: 22px;
+    border: 1px solid #e1eaf2; border-radius: 16px;
+    margin-bottom: 15px;
+}
+.result-card {
+    background: #e5f7f0; padding: 24px;
+    border: 1px solid #b8e8d5; border-radius: 16px;
+}
+div.stButton > button,
+div.stFormSubmitButton > button {
+    min-height: 44px; border-radius: 10px;
+    font-weight: 600;
+}
+[data-testid="stMetric"] {
+    background: white; padding: 15px;
+    border: 1px solid #e1eaf2; border-radius: 12px;
+}
 </style>
 """, unsafe_allow_html=True)
 
 
-# ---------- Load Model ----------
+# ---------- Load existing model ----------
 @st.cache_resource
 def load_artifacts():
     model = joblib.load(
@@ -85,182 +63,290 @@ def load_artifacts():
         encoding="utf-8"
     ) as file:
         feature_info = json.load(file)
-
     return model, features, feature_info
 
 
 model, features, feature_info = load_artifacts()
 
 
-# ---------- Sidebar ----------
-with st.sidebar:
-    st.markdown("## 🧬 GeneticCare AI")
-    st.caption("Genetic Disorder Classification")
-    st.divider()
+# ---------- Group the 37 existing features ----------
+groups = {
+    "Patient Details": [
+        "Patient Age", "Gender", "Status",
+        "Place of birth", "Parental consent"
+    ],
+    "Family & Genetic History": [
+        "Genes in mother's side", "Inherited from father",
+        "Maternal gene", "Paternal gene",
+        "Mother's age", "Father's age",
+        "History of anomalies in previous pregnancies",
+        "No. of previous abortion"
+    ],
+    "Birth & Maternal History": [
+        "Birth asphyxia",
+        "Autopsy shows birth defect (if applicable)",
+        "Folic acid details (peri-conceptional)",
+        "H/O serious maternal illness",
+        "H/O radiation exposure (x-ray)",
+        "H/O substance abuse",
+        "Assisted conception IVF/ART",
+        "Birth defects"
+    ],
+    "Clinical Details & Symptoms": [
+        "Blood cell count (mcL)",
+        "White Blood cell count (thousand per microliter)",
+        "Respiratory Rate (breaths/min)",
+        "Heart Rate (rates/min",
+        "Test 1", "Test 2", "Test 3", "Test 4", "Test 5",
+        "Blood test result", "Follow-up",
+        "Symptom 1", "Symptom 2", "Symptom 3",
+        "Symptom 4", "Symptom 5"
+    ]
+}
 
-    st.markdown("### How it works")
-    st.markdown("""
-    **1. Enter details**  
-    Fill in the patient and family-history information.
-
-    **2. Run prediction**  
-    The trained ML model analyses the entered data.
-
-    **3. View results**  
-    See the predicted category and model probability estimates.
-    """)
-
-    st.divider()
-    st.caption("Student ML Project · Educational use only")
+# Keep every feature even if a future feature name isn't in groups.
+assigned = {name for values in groups.values() for name in values}
+for feature in features:
+    if feature not in assigned:
+        groups["Clinical Details & Symptoms"].append(feature)
 
 
-# ---------- Hero Section ----------
+# ---------- Session state ----------
+if "step" not in st.session_state:
+    st.session_state.step = 0
+
+if "patient_values" not in st.session_state:
+    st.session_state.patient_values = {}
+
+if "prediction_result" not in st.session_state:
+    st.session_state.prediction_result = None
+
+
+# ---------- Header ----------
 st.markdown("""
 <div class="hero">
     <h1>🧬 GeneticCare AI</h1>
-    <p>Understand genetic disorder classification through
-    a simple machine-learning demonstration.</p>
+    <p>A simple machine-learning demonstration for genetic disorder
+    classification. Complete the steps to view the model estimate.</p>
 </div>
 """, unsafe_allow_html=True)
 
 st.warning(
-    "Educational prototype only. This prediction is not a medical "
-    "diagnosis and must not be used to make medical decisions. "
-    "Please consult a qualified healthcare professional for medical concerns."
+    "Educational prototype only — this is not a medical diagnosis. "
+    "Do not use its output to make medical decisions."
 )
 
-# ---------- Input Form ----------
-st.markdown("## 👤 Patient Information")
-st.write(
-    "Complete the fields below. The model will use these details "
-    "to generate a classification estimate."
-)
+if st.session_state.prediction_result is None:
+    step_names = list(groups.keys())
+    step = st.session_state.step
 
-input_data = {}
+    st.progress((step + 1) / len(step_names))
+    st.caption(f"Step {step + 1} of {len(step_names)}")
 
-with st.form("patient_form"):
-    st.markdown("### 📋 Patient & Family Details")
-    st.caption("Choose the option that best matches the available information.")
+    current_group = step_names[step]
+    st.markdown(f"## {current_group}")
 
-    columns = st.columns(2)
+    descriptions = [
+        "Enter basic patient information.",
+        "Add the available family and genetic history.",
+        "Provide the available birth and maternal history.",
+        "Enter clinical measurements, test values and symptoms."
+    ]
+    st.write(descriptions[step])
 
-    for i, feature in enumerate(features):
-        info = feature_info[feature]
-        label = feature.replace("_", " ")
+    current_features = [
+        feature for feature in groups[current_group]
+        if feature in features
+    ]
 
-        with columns[i % 2]:
-            if info["type"] == "number":
-                input_data[feature] = st.number_input(
-                    label,
-                    value=float(info["default"]),
-                    help=f"Enter the value for {label.lower()}."
-                )
-            else:
-                options = info["options"]
-                default = info["default"]
-                index = options.index(default) if default in options else 0
+    with st.form(f"step_form_{step}"):
+        cols = st.columns(2)
 
-                input_data[feature] = st.selectbox(
-                    label,
-                    options,
-                    index=index,
-                    help=f"Select the available value for {label.lower()}."
-                )
-
-    st.divider()
-    submitted = st.form_submit_button(
-        "🔍 Predict Category",
-        type="primary",
-        use_container_width=True
-    )
-
-# Reset form by rerunning with cleared session state
-if st.button("↻ Reset inputs"):
-    st.rerun()
-
-
-# ---------- Prediction Results ----------
-if submitted:
-    input_df = pd.DataFrame([input_data], columns=features)
-
-    try:
-        prediction = model.predict(input_df)[0]
-
-        st.divider()
-        st.markdown("## 📊 Prediction Results")
-
-        st.markdown(f"""
-        <div class="result-card">
-            <p style="margin-bottom:6px;color:#286b5a;">
-                MODEL-PREDICTED CATEGORY
-            </p>
-            <h2 style="color:#145b4a;margin-top:0;">
-                {prediction}
-            </h2>
-            <p style="color:#286b5a;margin-bottom:0;">
-                This is a machine-learning estimate, not a confirmed diagnosis.
-            </p>
-        </div>
-        """, unsafe_allow_html=True)
-
-        if hasattr(model, "predict_proba"):
-            probabilities = model.predict_proba(input_df)[0]
-
-            result = pd.DataFrame({
-                "Disorder Category": model.classes_,
-                "Probability Estimate (%)": probabilities * 100
-            }).sort_values(
-                "Probability Estimate (%)",
-                ascending=False
-            ).reset_index(drop=True)
-
-            top_probability = result.iloc[0]["Probability Estimate (%)"]
-
-            metric1, metric2 = st.columns(2)
-            with metric1:
-                st.metric("Predicted category", str(prediction))
-            with metric2:
-                st.metric(
-                    "Top model probability",
-                    f"{top_probability:.1f}%"
-                )
-
-            st.markdown("### 📈 Category Probability Estimates")
-            st.caption(
-                "These percentages describe the model's estimated probabilities; "
-                "they are not the chance that a person medically has a disorder."
+        for i, feature in enumerate(current_features):
+            info = feature_info[feature]
+            label = feature.replace("_", " ")
+            old_value = st.session_state.patient_values.get(
+                feature, info["default"]
             )
 
-            chart_data = result.set_index("Disorder Category")
-            st.bar_chart(chart_data["Probability Estimate (%)"])
+            with cols[i % 2]:
+                if info["type"] == "number":
+                    try:
+                        value = float(old_value)
+                    except (ValueError, TypeError):
+                        value = float(info["default"])
 
-            with st.expander("View detailed percentages"):
-                display_result = result.copy()
-                display_result["Probability Estimate (%)"] = (
-                    display_result["Probability Estimate (%)"].map(
-                        lambda value: f"{value:.2f}%"
+                    st.session_state.patient_values[feature] = st.number_input(
+                        label,
+                        value=value,
+                        key=f"input_{step}_{feature}",
+                        help="Enter the available value from the record."
                     )
+                else:
+                    options = info["options"]
+
+                    # Use a radio group for simple Yes/No fields.
+                    if set(options) == {"Yes", "No"}:
+                        index = options.index(old_value) if old_value in options else 0
+                        st.session_state.patient_values[feature] = st.radio(
+                            label,
+                            options,
+                            index=index,
+                            horizontal=True,
+                            key=f"input_{step}_{feature}"
+                        )
+                    else:
+                        index = options.index(old_value) if old_value in options else 0
+                        st.session_state.patient_values[feature] = st.selectbox(
+                            label,
+                            options,
+                            index=index,
+                            key=f"input_{step}_{feature}"
+                        )
+
+        st.divider()
+        left, right = st.columns(2)
+
+        with left:
+            back_clicked = st.form_submit_button(
+                "← Back",
+                use_container_width=True,
+                disabled=(step == 0)
+            )
+
+        with right:
+            next_label = (
+                "Review & Predict →"
+                if step == len(step_names) - 1
+                else "Save & Next →"
+            )
+            next_clicked = st.form_submit_button(
+                next_label,
+                type="primary",
+                use_container_width=True
+            )
+
+    if back_clicked and step > 0:
+        st.session_state.step -= 1
+        st.rerun()
+
+    if next_clicked:
+        if step < len(step_names) - 1:
+            st.session_state.step += 1
+            st.rerun()
+        else:
+            # Preserve the model's exact training feature order.
+            missing = [
+                feature for feature in features
+                if feature not in st.session_state.patient_values
+            ]
+
+            if missing:
+                st.error(
+                    "Some model inputs are missing. Please go back and "
+                    "complete each step."
                 )
-                st.dataframe(
-                    display_result,
-                    use_container_width=True,
-                    hide_index=True
+            else:
+                input_df = pd.DataFrame(
+                    [[st.session_state.patient_values[f] for f in features]],
+                    columns=features
                 )
 
-        st.info(
-            "Next step: discuss any health concerns or family history "
-            "with a qualified healthcare professional."
+                try:
+                    prediction = model.predict(input_df)[0]
+                    probabilities = None
+
+                    if hasattr(model, "predict_proba"):
+                        probabilities = model.predict_proba(input_df)[0]
+
+                    st.session_state.prediction_result = {
+                        "prediction": str(prediction),
+                        "probabilities": (
+                            probabilities.tolist()
+                            if probabilities is not None else None
+                        ),
+                        "classes": (
+                            [str(c) for c in model.classes_]
+                            if probabilities is not None else None
+                        )
+                    }
+                    st.rerun()
+
+                except Exception as error:
+                    st.error(
+                        "Prediction failed. Please check the model files "
+                        "and the entered values."
+                    )
+                    st.caption(str(error))
+
+
+# ---------- Results ----------
+if st.session_state.prediction_result is not None:
+    result = st.session_state.prediction_result
+
+    st.markdown("## 📊 Your Results")
+    st.markdown(
+        f"""
+        <div class="result-card">
+            <p style="color:#286b5a;">MODEL-PREDICTED CATEGORY</p>
+            <h2 style="color:#145b4a;">
+                {html.escape(result["prediction"])}
+            </h2>
+            <p style="color:#286b5a;">
+                This is a model estimate, not a confirmed diagnosis.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    if result["probabilities"] is not None:
+        result_df = pd.DataFrame({
+            "Category": result["classes"],
+            "Model probability estimate (%)": [
+                value * 100 for value in result["probabilities"]
+            ]
+        }).sort_values(
+            "Model probability estimate (%)",
+            ascending=False
         )
 
-    except Exception:
-        st.error(
-            "Prediction could not be completed. Please check the input "
-            "values and confirm that the model files match this app."
+        st.markdown("### Probability estimates")
+        st.caption(
+            "These percentages are model outputs, not the medical likelihood "
+            "that a person has a genetic disorder."
+        )
+        st.bar_chart(
+            result_df.set_index("Category")[
+                "Model probability estimate (%)"
+            ]
         )
 
-# ---------- Footer ----------
+        with st.expander("View percentage details"):
+            display_df = result_df.copy()
+            display_df["Model probability estimate (%)"] = (
+                display_df["Model probability estimate (%)"].map(
+                    lambda x: f"{x:.2f}%"
+                )
+            )
+            st.dataframe(
+                display_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+    st.info(
+        "For health concerns or questions about family history, "
+        "please consult a qualified healthcare professional."
+    )
+
+    if st.button("↻ Start a new assessment", type="primary"):
+        st.session_state.step = 0
+        st.session_state.patient_values = {}
+        st.session_state.prediction_result = None
+        st.rerun()
+
 st.divider()
 st.caption(
-    "GeneticCare AI | Educational machine-learning project | "
-    "Not intended for clinical use"
+    "GeneticCare AI · Student ML Project · Not intended for clinical use"
 )
